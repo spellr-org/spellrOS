@@ -100,32 +100,5 @@ void loop() {
     prevY = msa.y; // Update the previous Y value
     delay(100);
   }
-
-  // Update word index based on tilt direction and correctness
-  // if (wordIsReal[currentWordIndex]) {
-  //   if (Serial.readString() == "Left\n") {
-  //     currentWordIndex = (currentWordIndex + 1) % numWords;
-  //   } else {
-  //     u8g2.clearBuffer();
-  //     u8g2.drawStr(0, 10, "Wrong!");
-  //     u8g2.sendBuffer();
-  //     delay(1000);
-  //     u8g2.clearBuffer();
-  //     u8g2.drawStr(0, 10, words[currentWordIndex]);
-  //     u8g2.sendBuffer();
-  //   }
-  // } else {
-  //   if (Serial.readString() == "Right\n") {
-  //     currentWordIndex = (currentWordIndex + 1) % numWords;
-  //   } else {
-  //     u8g2.clearBuffer();
-  //     u8g2.drawStr(0, 10, "Wrong!");
-  //     u8g2.sendBuffer();
-  //     delay(1000);
-  //     u8g2.clearBuffer();
-  //     u8g2.drawStr(0, 10, words[currentWordIndex]);
-  //     u8g2.sendBuffer();
-  //   }
-  // }
   currentWordIndex = (currentWordIndex + 1) % numWords;
 }
