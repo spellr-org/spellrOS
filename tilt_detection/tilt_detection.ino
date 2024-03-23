@@ -1,6 +1,5 @@
 #include <Adafruit_MSA301.h>
 #include <Adafruit_Sensor.h>
-#include <ArrayList.h>
 #include <float.h> 
 
 Adafruit_MSA311 msa;

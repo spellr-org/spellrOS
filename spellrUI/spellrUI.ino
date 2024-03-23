@@ -6,6 +6,100 @@
 #include <U8g2lib.h>
 #include <SoftwareSerial.h>
 
+#include <Adafruit_MSA301.h>
+#include <Adafruit_Sensor.h>
+#include <float.h> 
+
+Adafruit_MSA311 msa;
+
+const int numReadings = 10;
+double rawAXs[numReadings]; // the readings from the analog input
+double rawAYs[numReadings];
+double rawAZs[numReadings];
+
+const double magnitude_thres = 10;
+const double spike_thres = 20;
+bool isSwiping = false;
+
+long startSwipeTime = 0;
+long millis_thres = 100;
+
+long potentialStopTime = 0;
+long potentialStopThres = 70;
+long totalSwipeThres = 100;
+
+double swipeDataPY[20];
+double swipeDataMA[20];
+int swipeIndex = 0;
+
+const int swipeHistory = 200;
+
+double AYs[swipeHistory];
+double VYs[swipeHistory-1];
+double PYs[2];
+
+bool swipeUp = false;
+
+
+void pushReading(double arr[], double val) {
+  // Shift all the readings one position down
+  for (int i = sizeof(arr) - 1; i > 0; i--) {
+    arr[i] = arr[i - 1];
+  }
+  arr[0] = val;
+}
+
+double average(double arr[]) {
+  double total = 0; // Initialize total sum of the array elements
+  for(int i = 0; i < sizeof(arr); i++) {
+    total += arr[i]; // Sum up all the elements
+  }
+  double avg = total / sizeof(arr); // Calculate the average
+  return avg; // Return the average value
+}
+
+double sum(double arr[]) {
+  double total = 0; // Initialize total sum of the array elements
+  for(int i = 0; i < sizeof(arr); i++) {
+    total += arr[i]; // Sum up all the elements
+  }
+  return total;
+}
+
+double magnitude(double x, double y, double z){
+  return sqrt(x*x + y*y + z*z);
+}
+
+int maxIndex(double arr[]) {
+  double max = DBL_MIN;
+  double index = -1;
+  for(int i = 0; i < sizeof(arr); i++) {
+    if (arr[i] > max) {
+      index = i;
+      max = arr[i];
+    }
+  }
+  return index;
+}
+
+int maxValue(double arr[]) {
+  double max = DBL_MIN;
+  double index = -1;
+  for(int i = 0; i < sizeof(arr); i++) {
+    if (arr[i] > max) {
+      index = i;
+      max = arr[i];
+    }
+  }
+  return max;
+}
+
+void clear(double arr[]) {
+  for (int i = 0; i < sizeof(arr); i++) {
+    arr[i] = 0;
+  }
+}
+
 
 // U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_DEV_0 | U8G_I2C_OPT_NO_ACK | U8G_I2C_OPT_FAST); // Fast I2C / TWI
 U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0);
@@ -342,7 +436,7 @@ char menu_items [NUM_ITEMS] [MAX_ITEM_LENGTH] = {  // array with item names
   { "TRANSCRIBE" }, 
   { "Battery" }, 
   { "Dashboard" },
-  { "WordQuest" }
+  { "WordQuest" },
  };
 // note - when changing the order of items above, make sure the other arrays referencing bitmaps
 // also have the same order, for example array "bitmap_icons" for icons, and other arrays for screenshots and QR codes
@@ -368,16 +462,16 @@ int item_sel_next; // next item - used in the menu screen to draw next item afte
 
 int current_screen = 0;   // 0 = menu, 1 = screenshot, 2 = qr
 
-
-
-
 // SPELLING: 0 just shows the word, 1 shows the letters one by one, 2 shows each individual letter being written out
 int spelling_mode = 0;
 
 
 
+/***************
 
+STATE TRANSCRIBE - variables needed for transcription functionality
 
+***************/
 const int micPin = A0;
 bool inTranscribeMode = false;
 
@@ -385,6 +479,25 @@ String inputString = "";      // a String to hold incoming data
 bool stringComplete = false;  // whether the string is complete
 
 String translated_word = "DEFAULT";
+
+
+
+
+
+
+/***************
+
+STATE SWR - Variables needed for SWR game (wordquest)
+
+***************/
+char* words[] = {"apple", "banana", "orange", "qwerty", "zxcvbn"};
+bool wordIsReal[] = {true, true, true, false, false};
+int numWords = sizeof(words) / sizeof(words[0]);
+
+int wordIndex = 0;
+bool swr_waiting = true;
+int correct = 0, incorrect = 0;
+
 
 void setup() {
   u8g2.begin();
@@ -401,10 +514,21 @@ void setup() {
   Serial.begin(9600);
   pinMode(micPin, INPUT);
 
+
+  if (!msa.begin(MSA311_I2CADDR_DEFAULT, &Wire1)) {
+      Serial.println("Failed to find MSA301 chip");
+      while (1) { delay(10); }
+    }
+    Serial.println("MSA301 Found!");
+
+  clear(rawAXs); clear(rawAYs); clear(rawAZs);
+  clear(AYs); clear(VYs); clear(PYs);
+
 }
 
 
 void loop() {
+
   u8g2.firstPage(); // required for page drawing mode for u8g library
 
   if (current_screen == 0) { // MENU SCREEN
@@ -451,6 +575,14 @@ void loop() {
 
 
   do {
+    ///////////////////RENDER/////////////////////////// RENDERING SCREEN STUFF BELOW HERE
+
+
+    /********************
+    current_screen 0
+    RENDER MENU stuff here
+
+    ********************/
     if (current_screen == 0) { // MENU SCREEN
 
       // selected item background
@@ -480,74 +612,295 @@ void loop() {
       // draw upir logo
       u8g2.drawBitmap(128-16-4, 64-4, 16/8, 4, upir_logo);               
 
-    } 
-    else if (current_screen == 1) { // SCREENSHOTS SCREEN
+    }
+
+    /********************
+    current_screen 1, item_selected 3
+    RENDER SWR in-game graphics, the plus sign + thing and the 
+
+    ********************/
+    else if (current_screen == 1 && (item_selected == 3 || item_selected == 4)) {
+      // SWR GAME GRAPHICS HERE
+      if (swr_waiting) {
+          u8g2.setFont(u8g_font_7x14B);
+          u8g2.setFontMode(1); // Enable transparent mode
+          int textWidth = u8g2.getStrWidth("+");
+          int x = (128 - textWidth) / 2; // Calculate x-coordinate to center the text
+          int y = 20; // Adjust this value to vertically position the text
+          u8g2.drawStr(x, y, "+");
+      } else {
+        u8g2.setFont(u8g_font_7x14B);
+        u8g2.setFontMode(1); // Enable transparent mode
+        int textWidth = u8g2.getStrWidth(words[wordIndex]);
+        int x = (128 - textWidth) / 2; // Calculate x-coordinate to center the text
+        int y = 20; // Adjust this value to vertically position the text
+        u8g2.drawStr(x, y, words[wordIndex]);
+
+        u8g2.setFont(u8g2_font_5x7_tr); // Set a smaller font
+        u8g2.drawStr(5, 62, "FAKE"); // Draw "LEFT" in the lower-left corner
+        u8g2.drawStr(105, 62, "REAL"); // Draw "RIGHT" in the lower-right corner
+      }
+    }
+
+    /********************
+    current_screen 1
+    RENDER Listening..... graphic
+
+    ********************/
+    else if (current_screen == 1) {
         if (item_selected == 0) {
           u8g2.drawStr(25, 25, "Listening...");
         } else {
           u8g2.drawBitmap( 0, 0, 128/8, 64, bitmap_screenshots[item_selected]); // draw screenshot
         }
     }
+
+    /********************
+    current_screen 3
+    RENDER output of transcribe word, different spelling modes
+
+    ********************/
     else if (current_screen == 3) {   // DISPLAY WORDS SCREEN
       if (spelling_mode == 0) {
         u8g2.drawStr(25, 15+20+2, translated_word.c_str()); // DRAW WORD
       }
     }
+    
+    /********************
+    current_screen 4
+    RENDER SWR GAME (wordquest)
+
+    ********************/
+    else if (current_screen == 4) {   
+      u8g2.drawStr(25, 15+10+2, ("Correct: " + String(correct)).c_str());
+      u8g2.drawStr(25, 15+30+2, ("Incorrect: " + String(incorrect)).c_str());
+      // correct = 0, incorrect = 0;
+      wordIndex = 0;
+    }
   } while ( u8g2.nextPage() ); // required for page drawing mode with u8g library
 
 
-if (current_screen == 1 && item_selected == 0) {
-  Serial.println("GO");
-  BTSerial.println("GO");
 
-  inTranscribeMode = true;
-  while (inTranscribeMode) {
-    int micValue = analogRead(micPin);  // Read the microphone level
-    Serial.println(micValue);           // Print the microphone level to the Serial Monitor
-    BTSerial.println(micValue);           // Print the microphone level to the Serial Monitor
-    delay(10);                          // Adjust based on your desired sampling rate
-    if ((digitalRead(BUTTON_SELECT_PIN) == LOW) && (button_select_clicked == 0)) { // select button clicked, jump between screens
-      button_select_clicked = 1; // set button to clicked to only perform the action once
-      inTranscribeMode = false;
-    }
-    if ((digitalRead(BUTTON_SELECT_PIN) == HIGH) && (button_select_clicked == 1)) { // unclick 
-        button_select_clicked = 0;
+
+
+
+    ///////////////////LOGIC/////////////////////////// Internal logic and state stuff for all screens here
+
+
+
+/*********************************
+
+Transcribe LOGIC: listening to the microphone and handling serial shit
+
+********************************/
+  if (current_screen == 1 && item_selected == 0) {
+    Serial.println("GO");
+    BTSerial.println("GO");
+
+    inTranscribeMode = true;
+    while (inTranscribeMode) {
+      int micValue = analogRead(micPin);  // Read the microphone level
+      Serial.println(micValue);           // Print the microphone level to the Serial Monitor
+      BTSerial.println(micValue);           // Print the microphone level to the Serial Monitor
+      delay(10);                          // Adjust based on your desired sampling rate
+      if ((digitalRead(BUTTON_SELECT_PIN) == LOW) && (button_select_clicked == 0)) { // select button clicked, jump between screens
+        button_select_clicked = 1; // set button to clicked to only perform the action once
+        inTranscribeMode = false;
+      }
+      if ((digitalRead(BUTTON_SELECT_PIN) == HIGH) && (button_select_clicked == 1)) { // unclick 
+          button_select_clicked = 0;
+      }
+
     }
 
+    Serial.println("STOP");
+    BTSerial.println("STOP");
+    // 1 SECOND DELAY BETWEEN
+    delay(1000); 
+
+    // Check if something is available in Serial
+    while (BTSerial.available()) {
+      char inChar = (char)BTSerial.read();
+      inputString += inChar;
+      if (inChar == '\n') {
+        stringComplete = true;
+      }
+    }
+
+    if (stringComplete) {
+      // Check if the string starts with "RES: "
+      if (inputString.startsWith("RES: ")) {
+        // Extract the word after "RES: "
+        String word = inputString.substring(5);  // Skip "RES: " (4 chars) and one space
+        translated_word = word;
+      }
+      inputString = "";        // Clear the input string for the next read
+      stringComplete = false;  // Reset the flag
+    }
+    
+    current_screen = 3;
   }
 
-  Serial.println("STOP");
-  BTSerial.println("STOP");
-  // 1 SECOND DELAY BETWEEN
-  delay(1000); 
 
-  // Check if something is available in Serial
-  while (BTSerial.available()) {
-    char inChar = (char)BTSerial.read();
-    inputString += inChar;
-    if (inChar == '\n') {
-      stringComplete = true;
+/*********************************
+
+SWR GAME WORD LOGIC (wordquest)
+
+********************************/
+  if (current_screen == 1 && (item_selected == 3 || item_selected == 4)) {
+    // ENDING THE GAME
+    if (wordIndex == numWords - 1) {
+        current_screen = 4;
+    }
+
+    else {
+      // STARTING NEW GAME
+      if (wordIndex == 0) {
+          correct = 0, incorrect = 0;
+      }
+
+      if (swr_waiting) {
+          /////////////// INSERT IMU LOGIC HERE
+          // + PLUS SIGN WAITING STATE
+          delay(1000);  // TAKE AVERAGE HERE
+          swr_waiting = false;
+
+
+      } else {
+        String left_or_right = "";
+
+        // Wait for serial input
+        while (left_or_right.length() == 0) {
+
+          /////////////// INSERT IMU LOGIC HERE
+          // IMU: if it's left tilt, println "left\n", otherwise print "right\n"
+          sensors_event_t event; 
+      msa.getEvent(&event);
+
+      double rawAX = event.acceleration.x;
+      double rawAY = event.acceleration.y;
+      double rawAZ = event.acceleration.z;
+
+      pushReading(rawAXs, rawAX);
+      pushReading(rawAYs, rawAY);
+      pushReading(rawAZs, rawAZ);
+
+      double avgAX = average(rawAXs);
+      double avgAY = average(rawAYs);
+      double avgAZ = average(rawAZs);
+
+      double AX = event.acceleration.x - avgAX;
+      double AY = event.acceleration.y - avgAY;
+      double AZ = event.acceleration.z - avgAZ;
+
+      pushReading(AYs, AY);
+      double VY = sum(AYs);
+      pushReading(VYs, VY);
+      double PY = sum(VYs);
+      pushReading(PYs, PY);
+
+      double magnitudeA = magnitude(AX, AY, AZ);
+
+      // Serial.print("AY:"); Serial.print(AY); Serial.print(",");
+      // Serial.print("VY:"); Serial.print(VY); Serial.print(",");
+      // Serial.print("PY:"); Serial.print(PY); Serial.print(",");
+      // Serial.print("MA:"); Serial.println(magnitudeA);
+
+      if (magnitudeA >= magnitude_thres && !isSwiping) {
+        startSwipeTime = millis();
+        isSwiping = true;
+        swipeUp = (PY <= 0);
+        swipeIndex = 0;
+      }
+
+      if (isSwiping && magnitudeA >= magnitude_thres) {
+        potentialStopTime = millis();
+      }
+
+      if (isSwiping && (magnitudeA < magnitude_thres) && (millis() >= potentialStopTime + potentialStopThres)) {
+        isSwiping = false;
+
+        if (swipeUp && (maxValue(swipeDataMA) >= spike_thres) && (millis() >= startSwipeTime + totalSwipeThres)) {
+          left_or_right = "left";
+          Serial.println(left_or_right);
+        } else {
+          left_or_right = "right";
+          Serial.println(left_or_right);
+        }
+        Serial.println(left_or_right);
+
+        // int index = maxIndex(swipeDataMA);
+        // double swipeValue = swipeDataPY[index];
+
+        // if (swipeValue >= 0) {
+        //   // Serial.println("Swiped Down");
+        // } else {
+        //   // Serial.println("Swiped Up");
+        // }
+
+        clear(swipeDataPY);
+        clear(swipeDataMA);
+
+        // Serial.println(millis() - startReadingTime);
+        // Serial.println(swipeValue);
+      }
+
+      if (isSwiping) {
+        swipeDataPY[swipeIndex] = PY;
+        swipeDataMA[swipeIndex] = magnitudeA;
+        swipeIndex = swipeIndex + 1;
+      }
+    
+      delay(30); 
+      
+
+
+              // // Check if something is available in Serial
+              // while (Serial.available()) {
+              //   char inChar = (char)Serial.read();
+              //   inputString += inChar;
+              //   if (inChar == '\n') {
+              //     stringComplete = true;
+              //   }
+              // }
+
+              // if (stringComplete) {
+              //   // Check if the string starts with "RES: "
+              //   if (inputString.startsWith("RES: ")) {
+              //     // Extract the word after "RES: "
+              //     left_or_right = inputString.substring(5);
+              //   }
+              //   inputString = "";
+              //   stringComplete = false;
+              // }
+        }
+
+        // Check if the response is correct
+        if (left_or_right == "right") {
+          if (wordIsReal[wordIndex]) {
+            correct = correct + 1;
+          } else {
+            incorrect = incorrect + 1;
+          }
+        } else if (left_or_right == "left") {
+          if (!wordIsReal[wordIndex]) {
+            correct = correct + 1;
+          } else {
+            incorrect = incorrect + 1;
+          }
+        }
+        // Serial.println(left_or_right);
+        // Serial.println(correct);
+        // Serial.println(incorrect);
+
+        left_or_right = ""; // Reset the left_or_right string
+        wordIndex = (wordIndex + 1) % numWords;
+        swr_waiting = true;
+      }
     }
   }
 
-  if (stringComplete) {
-    // Check if the string starts with "RES: "
-    if (inputString.startsWith("RES: ")) {
-      // Extract the word after "RES: "
-      String word = inputString.substring(5);  // Skip "RES: " (4 chars) and one space
-      translated_word = word;
-    }
-    inputString = "";        // Clear the input string for the next read
-    stringComplete = false;  // Reset the flag
-  }
   
-  current_screen = 3;
-}
-
-if (current_screen == 1 && item_selected == 3) {
-  // SINGLE WORD RECOGNITION GAME HERE
-
-}
 
 }
 
