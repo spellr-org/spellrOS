@@ -118,12 +118,10 @@ SoftwareSerial BTSerial(7, 8);
 
 // all the arrays below are generated from images using image2cpp website
 // scroll down to see the actual code
-// HERE WE CAN PUT A SPELLR LOGO!!!!!
-const unsigned char upir_logo [] PROGMEM = {  // this is another way how to define images, using binary notation
-B00010101,  B11010111,
-B00010101,  B01000101,
-B00010101,  B10010110,
-B00011001,  B00010101
+// bluetooth logo
+const unsigned char bluetooth_logo [] PROGMEM = {  // this is another way how to define images, using binary notation
+  0x00, 0x00, 0x00, 0x00, 0x03, 0x80, 0x02, 0x40, 0x22, 0x20, 0x12, 0x10, 0x0a, 0x20, 0x06, 0x40, 
+	0x03, 0x80, 0x06, 0x40, 0x0a, 0x20, 0x12, 0x10, 0x22, 0x20, 0x02, 0x40, 0x03, 0x80, 0x00, 0x00
 };
 
 // 'icon_3dcube', 16x16px
@@ -173,7 +171,7 @@ const unsigned char* bitmap_icons[8] = {
   bitmap_icon_battery,
   bitmap_icon_dashboard,
   bitmap_icon_fireworks,
-  bitmap_icon_gps_speed,
+  bluetooth_logo,
   bitmap_icon_knob_over_oled,
   bitmap_icon_parksensor,
   bitmap_icon_turbo
@@ -425,6 +423,7 @@ const unsigned char bitmap_item_sel_outline [] PROGMEM = {
 
 
 
+
 // ------------------ end generated bitmaps from image2cpp ---------------------------------
 
 
@@ -437,6 +436,8 @@ char menu_items [NUM_ITEMS] [MAX_ITEM_LENGTH] = {  // array with item names
   { "Battery" }, 
   { "Dashboard" },
   { "WordQuest" },
+  { "Bluetooth" }, 
+  { "Calibrate" }
  };
 // note - when changing the order of items above, make sure the other arrays referencing bitmaps
 // also have the same order, for example array "bitmap_icons" for icons, and other arrays for screenshots and QR codes
@@ -478,7 +479,7 @@ bool inTranscribeMode = false;
 String inputString = "";      // a String to hold incoming data
 bool stringComplete = false;  // whether the string is complete
 
-String translated_word = "DEFAULT";
+String translated_word = "Try Again!";
 
 
 
@@ -497,6 +498,79 @@ int numWords = sizeof(words) / sizeof(words[0]);
 int wordIndex = 0;
 bool swr_waiting = true;
 int correct = 0, incorrect = 0;
+
+float baselinePitch = -30.0;
+
+/********************
+
+HELPER FN FOR FUNDING TILT DIRECTION (pitch and roll based on accelerometer)
+
+********************/
+
+String getTiltDirection(float pitch, float roll, float baselinePitch) {
+  String direction = "";
+  
+  // Define the baseline as 30 degrees tilted up
+  // float baselinePitch = -30.0; // Adjusting for 30 degrees up as the new baseline
+  
+  // Define the buffer region (deadzone) to avoid sensitivity to minor tilts
+  float bufferRegion = 30.0; // Degrees
+  
+  // Adjust pitch relative to the new baseline
+  pitch -= baselinePitch;
+  
+  if (pitch > bufferRegion) {
+    direction += "Down ";
+  } else if (pitch < -bufferRegion) {
+    direction += "Up ";
+  }
+  
+  if (roll > bufferRegion) {
+    direction += "Right";
+  } else if (roll < -bufferRegion) {
+    direction += "Left";
+  }
+  
+  if (direction == "") {
+    direction = "Stable";
+  }
+  
+  return direction;
+}
+
+
+float calibratePitch () {
+  // Calibration logic to establish baseline pitch
+
+  // Variables to store the sum of pitch readings and the final baseline pitch
+  float pitchSum = 0.0;
+  const int readings = 30; // Number of readings to take for averaging
+  
+  // Take multiple readings of the pitch over a short period
+  for (int i = 0; i < readings; i++) {
+      sensors_event_t event; 
+      msa.getEvent(&event);
+      
+
+      double rawAX = event.acceleration.x;
+      double rawAY = event.acceleration.y;
+      double rawAZ = event.acceleration.z;
+
+      float pitch = atan(event.acceleration.x / sqrt(event.acceleration.y * event.acceleration.y + event.acceleration.z * event.acceleration.z)) * (180.0 / M_PI);
+      pitchSum += pitch; // Assuming readPitch() is your function to read the current pitch
+      delay(100); // Short delay between readings to spread them out over time
+}
+
+  float new_pitch_base = pitchSum / readings;
+  return new_pitch_base;
+}
+
+/***************
+
+STATE BLUETOOTH - Variables needed for bluetooth connection and maintenance
+
+***************/
+bool is_bluetooth_connected = false;
 
 
 void setup() {
@@ -533,21 +607,39 @@ void loop() {
 
   if (current_screen == 0) { // MENU SCREEN
 
+
+        sensors_event_t event; 
+        msa.getEvent(&event);
+        
+
+        double rawAX = event.acceleration.x;
+        double rawAY = event.acceleration.y;
+        double rawAZ = event.acceleration.z;
+
+        float pitch = atan(event.acceleration.x / sqrt(event.acceleration.y * event.acceleration.y + event.acceleration.z * event.acceleration.z)) * (180.0 / M_PI);
+        float roll = atan(event.acceleration.y / sqrt(event.acceleration.x * event.acceleration.x + event.acceleration.z * event.acceleration.z)) * (180.0 / M_PI);
+
+        String tiltDirection = getTiltDirection(pitch, roll, baselinePitch);
+
+
+
       // up and down buttons only work for the menu screen
-      if ((digitalRead(BUTTON_UP_PIN) == LOW) && (button_up_clicked == 0)) { // up button clicked - jump to previous menu item
+      if (tiltDirection.startsWith("Down")) { // up button clicked - jump to previous menu item
         item_selected = item_selected - 1; // select previous item
         button_up_clicked = 1; // set button to clicked to only perform the action once
         if (item_selected < 0) { // if first item was selected, jump to last item
           item_selected = NUM_ITEMS-1;
         }
+        delay(500);
       }
-      else if ((digitalRead(BUTTON_DOWN_PIN) == LOW) && (button_down_clicked == 0)) { // down button clicked - jump to next menu item
+      else if (tiltDirection.startsWith("Up")) { // down button clicked - jump to next menu item
         item_selected = item_selected + 1; // select next item
         button_down_clicked = 1; // set button to clicked to only perform the action once
         if (item_selected >= NUM_ITEMS) { // last item was selected, jump to first menu item
           item_selected = 0;
-          }
-      } 
+        }
+        delay(500);
+      }
 
       if ((digitalRead(BUTTON_UP_PIN) == HIGH) && (button_up_clicked == 1)) { // unclick 
         button_up_clicked = 0;
@@ -609,9 +701,11 @@ void loop() {
       // draw scrollbar handle
       u8g2.drawBox(125, 64/NUM_ITEMS * item_selected, 3, 64/NUM_ITEMS); 
 
-      // draw upir logo
-      u8g2.drawBitmap(128-16-4, 64-4, 16/8, 4, upir_logo);               
 
+      if (is_bluetooth_connected) {
+        // draw bluetooth connected
+        u8g2.drawBitmap(128-16-4, 1, 16/8, 16, bluetooth_logo);    
+      }
     }
 
     /********************
@@ -619,7 +713,7 @@ void loop() {
     RENDER SWR in-game graphics, the plus sign + thing and the 
 
     ********************/
-    else if (current_screen == 1 && (item_selected == 3 || item_selected == 4)) {
+    else if (current_screen == 1 && item_selected == 3) {
       // SWR GAME GRAPHICS HERE
       if (swr_waiting) {
           u8g2.setFont(u8g_font_7x14B);
@@ -633,26 +727,72 @@ void loop() {
         u8g2.setFontMode(1); // Enable transparent mode
         int textWidth = u8g2.getStrWidth(words[wordIndex]);
         int x = (128 - textWidth) / 2; // Calculate x-coordinate to center the text
-        int y = 20; // Adjust this value to vertically position the text
+        int y = 35; // Adjust this value to vertically position the text
         u8g2.drawStr(x, y, words[wordIndex]);
 
         u8g2.setFont(u8g2_font_5x7_tr); // Set a smaller font
-        u8g2.drawStr(5, 62, "FAKE"); // Draw "LEFT" in the lower-left corner
-        u8g2.drawStr(105, 62, "REAL"); // Draw "RIGHT" in the lower-right corner
+        u8g2.drawStr(x + 5, 10, "REAL"); // Draw "LEFT" in the lower-left corner
+        u8g2.drawStr(x + 5, 62, "FAKE"); // Draw "RIGHT" in the lower-right corner
       }
     }
 
     /********************
-    current_screen 1
+    current_screen 1, item_selected 4
+    RENDER BLUETOOTH thing
+
+    ********************/
+    else if (current_screen == 1 && item_selected == 4) {
+      if (!is_bluetooth_connected) {
+        u8g2.setFont(u8g_font_7x14B);
+        u8g2.setFontMode(1); // Enable transparent mode
+        int textWidth = u8g2.getStrWidth("Connecting...");
+        int x = (128 - textWidth) / 2; // Calculate x-coordinate to center the text
+        int y = 35; // Adjust this value to vertically position the text
+        u8g2.drawStr(x, y, "Connecting...");
+      } else {
+        u8g2.setFont(u8g_font_7x14B);
+        u8g2.setFontMode(1); // Enable transparent mode
+        int textWidth = u8g2.getStrWidth("Connected!");
+        int x = (128 - textWidth) / 2; // Calculate x-coordinate to center the text
+        int y = 35; // Adjust this value to vertically position the text
+        u8g2.drawStr(x, y, "Connected!");
+      }
+    }
+
+    /********************
+    current_screen 1 item_selected 0
     RENDER Listening..... graphic
 
     ********************/
+    else if (current_screen == 1 && item_selected == 0) {
+        u8g2.setFont(u8g_font_7x14B);
+        u8g2.setFontMode(1); // Enable transparent mode
+        int textWidth = u8g2.getStrWidth("Listening...");
+        int x = (128 - textWidth) / 2; // Calculate x-coordinate to center the text
+        int y = 35; // Adjust this value to vertically position the text
+        u8g2.drawStr(25, 25, "Listening...");
+    }
+
+    /********************
+    current_screen 1 item_selected 5
+    RENDER Calibration
+
+    ********************/
+    else if (current_screen == 1 && item_selected == 5) {
+        u8g2.setFont(u8g_font_7x14B);
+        u8g2.setFontMode(1); // Enable transparent mode
+        int textWidth = u8g2.getStrWidth("Hold Still...");
+        int x = (128 - textWidth) / 2; // Calculate x-coordinate to center the text
+        int y = 35; // Adjust this value to vertically position the text
+        u8g2.drawStr(25, 25, "Hold Still...");
+    }
+    /********************
+    current_screen 1    DEFAULT SCREEN
+    RENDER whatever the bitmap is supposed to be
+
+    ********************/
     else if (current_screen == 1) {
-        if (item_selected == 0) {
-          u8g2.drawStr(25, 25, "Listening...");
-        } else {
-          u8g2.drawBitmap( 0, 0, 128/8, 64, bitmap_screenshots[item_selected]); // draw screenshot
-        }
+      u8g2.drawBitmap( 0, 0, 128/8, 64, bitmap_screenshots[item_selected]); // draw screenshot
     }
 
     /********************
@@ -662,7 +802,12 @@ void loop() {
     ********************/
     else if (current_screen == 3) {   // DISPLAY WORDS SCREEN
       if (spelling_mode == 0) {
-        u8g2.drawStr(25, 15+20+2, translated_word.c_str()); // DRAW WORD
+        u8g2.setFont(u8g_font_7x14B);
+        u8g2.setFontMode(1); // Enable transparent mode
+        int textWidth = u8g2.getStrWidth(translated_word.c_str());
+        int x = (128 - textWidth) / 2; // Calculate x-coordinate to center the text
+        int y = 35; // Adjust this value to vertically position the text
+        u8g2.drawStr(x, y, translated_word.c_str());
       }
     }
     
@@ -698,25 +843,48 @@ Transcribe LOGIC: listening to the microphone and handling serial shit
     BTSerial.println("GO");
 
     inTranscribeMode = true;
+
+    // two button presses:
+    // while (inTranscribeMode) {
+    //   int micValue = analogRead(micPin);  // Read the microphone level
+    //   Serial.println(micValue);           // Print the microphone level to the Serial Monitor
+    //   BTSerial.println(micValue);           // Print the microphone level to the Serial Monitor
+    //   delay(10);                          // Adjust based on your desired sampling rate
+    //   if ((digitalRead(BUTTON_SELECT_PIN) == LOW) && (button_select_clicked == 0)) { // select button clicked, jump between screens
+    //     button_select_clicked = 1; // set button to clicked to only perform the action once
+    //     inTranscribeMode = false;
+    //   }
+    //   if ((digitalRead(BUTTON_SELECT_PIN) == HIGH) && (button_select_clicked == 1)) { // unclick 
+    //       button_select_clicked = 0;
+    //   }
+    // }
+
+    // one holding press:
+    // Check if the select button is pressed
+    if (digitalRead(BUTTON_SELECT_PIN) == LOW) {
+      inTranscribeMode = true; // Enter transcribe mode
+    }
+
     while (inTranscribeMode) {
-      int micValue = analogRead(micPin);  // Read the microphone level
-      Serial.println(micValue);           // Print the microphone level to the Serial Monitor
-      BTSerial.println(micValue);           // Print the microphone level to the Serial Monitor
-      delay(10);                          // Adjust based on your desired sampling rate
-      if ((digitalRead(BUTTON_SELECT_PIN) == LOW) && (button_select_clicked == 0)) { // select button clicked, jump between screens
-        button_select_clicked = 1; // set button to clicked to only perform the action once
-        inTranscribeMode = false;
-      }
-      if ((digitalRead(BUTTON_SELECT_PIN) == HIGH) && (button_select_clicked == 1)) { // unclick 
-          button_select_clicked = 0;
+      int micValue = analogRead(micPin); // Read the microphone level
+
+      Serial.println(micValue); // Print the microphone level to the Serial Monitor
+      BTSerial.println(micValue); // Print the microphone level to the Serial Monitor
+
+      // Check if the select button is released
+      if (digitalRead(BUTTON_SELECT_PIN) == HIGH) {
+        inTranscribeMode = false; // Exit transcribe mode
       }
 
+      delay(10); // Adjust based on your desired sampling rate
     }
+
+    
 
     Serial.println("STOP");
     BTSerial.println("STOP");
-    // 1 SECOND DELAY BETWEEN
-    delay(1000); 
+    // 2 SECOND DELAY BETWEEN
+    delay(2000); 
 
     // Check if something is available in Serial
     while (BTSerial.available()) {
@@ -747,7 +915,7 @@ Transcribe LOGIC: listening to the microphone and handling serial shit
 SWR GAME WORD LOGIC (wordquest)
 
 ********************************/
-  if (current_screen == 1 && (item_selected == 3 || item_selected == 4)) {
+  if (current_screen == 1 && item_selected == 3) {
     // ENDING THE GAME
     if (wordIndex == numWords - 1) {
         current_screen = 4;
@@ -760,147 +928,89 @@ SWR GAME WORD LOGIC (wordquest)
       }
 
       if (swr_waiting) {
-          /////////////// INSERT IMU LOGIC HERE
-          // + PLUS SIGN WAITING STATE
-          delay(1000);  // TAKE AVERAGE HERE
-          swr_waiting = false;
+          // Calibration logic to establish baseline pitch
 
+          // Calculate the average pitch to establish the baseline
+          baselinePitch = calibratePitch();
+
+          // Now baselinePitch holds the average pitch during calibration
+          // You can use this as your reference pitch for future tilt detection
+
+          swr_waiting = false; // Exit calibration mode
 
       } else {
-        String left_or_right = "";
+        Serial.println(baselinePitch);
+        String fake_or_real = "";
 
         // Wait for serial input
-        while (left_or_right.length() == 0) {
+        while (fake_or_real.length() == 0) {
 
           /////////////// INSERT IMU LOGIC HERE
           // IMU: if it's left tilt, println "left\n", otherwise print "right\n"
           sensors_event_t event; 
-      msa.getEvent(&event);
+          msa.getEvent(&event);
+          
 
-      double rawAX = event.acceleration.x;
-      double rawAY = event.acceleration.y;
-      double rawAZ = event.acceleration.z;
+          double rawAX = event.acceleration.x;
+          double rawAY = event.acceleration.y;
+          double rawAZ = event.acceleration.z;
 
-      pushReading(rawAXs, rawAX);
-      pushReading(rawAYs, rawAY);
-      pushReading(rawAZs, rawAZ);
+          float pitch = atan(event.acceleration.x / sqrt(event.acceleration.y * event.acceleration.y + event.acceleration.z * event.acceleration.z)) * (180.0 / M_PI);
+          float roll = atan(event.acceleration.y / sqrt(event.acceleration.x * event.acceleration.x + event.acceleration.z * event.acceleration.z)) * (180.0 / M_PI);
 
-      double avgAX = average(rawAXs);
-      double avgAY = average(rawAYs);
-      double avgAZ = average(rawAZs);
-
-      double AX = event.acceleration.x - avgAX;
-      double AY = event.acceleration.y - avgAY;
-      double AZ = event.acceleration.z - avgAZ;
-
-      pushReading(AYs, AY);
-      double VY = sum(AYs);
-      pushReading(VYs, VY);
-      double PY = sum(VYs);
-      pushReading(PYs, PY);
-
-      double magnitudeA = magnitude(AX, AY, AZ);
-
-      // Serial.print("AY:"); Serial.print(AY); Serial.print(",");
-      // Serial.print("VY:"); Serial.print(VY); Serial.print(",");
-      // Serial.print("PY:"); Serial.print(PY); Serial.print(",");
-      // Serial.print("MA:"); Serial.println(magnitudeA);
-
-      if (magnitudeA >= magnitude_thres && !isSwiping) {
-        startSwipeTime = millis();
-        isSwiping = true;
-        swipeUp = (PY <= 0);
-        swipeIndex = 0;
-      }
-
-      if (isSwiping && magnitudeA >= magnitude_thres) {
-        potentialStopTime = millis();
-      }
-
-      if (isSwiping && (magnitudeA < magnitude_thres) && (millis() >= potentialStopTime + potentialStopThres)) {
-        isSwiping = false;
-
-        if (swipeUp && (maxValue(swipeDataMA) >= spike_thres) && (millis() >= startSwipeTime + totalSwipeThres)) {
-          left_or_right = "left";
-          Serial.println(left_or_right);
-        } else {
-          left_or_right = "right";
-          Serial.println(left_or_right);
-        }
-        Serial.println(left_or_right);
-
-        // int index = maxIndex(swipeDataMA);
-        // double swipeValue = swipeDataPY[index];
-
-        // if (swipeValue >= 0) {
-        //   // Serial.println("Swiped Down");
-        // } else {
-        //   // Serial.println("Swiped Up");
-        // }
-
-        clear(swipeDataPY);
-        clear(swipeDataMA);
-
-        // Serial.println(millis() - startReadingTime);
-        // Serial.println(swipeValue);
-      }
-
-      if (isSwiping) {
-        swipeDataPY[swipeIndex] = PY;
-        swipeDataMA[swipeIndex] = magnitudeA;
-        swipeIndex = swipeIndex + 1;
-      }
-    
-      delay(30); 
-      
+          String tiltDirection = getTiltDirection(pitch, roll, baselinePitch);
 
 
-              // // Check if something is available in Serial
-              // while (Serial.available()) {
-              //   char inChar = (char)Serial.read();
-              //   inputString += inChar;
-              //   if (inChar == '\n') {
-              //     stringComplete = true;
-              //   }
-              // }
-
-              // if (stringComplete) {
-              //   // Check if the string starts with "RES: "
-              //   if (inputString.startsWith("RES: ")) {
-              //     // Extract the word after "RES: "
-              //     left_or_right = inputString.substring(5);
-              //   }
-              //   inputString = "";
-              //   stringComplete = false;
-              // }
+          if (tiltDirection.startsWith("Up")) {
+            fake_or_real = "fake"; // left = UP
+          } else if (tiltDirection.startsWith("Down")) {
+            fake_or_real = "real"; // right = DOWN
+          }
         }
 
         // Check if the response is correct
-        if (left_or_right == "right") {
+        if (fake_or_real == "real") {
           if (wordIsReal[wordIndex]) {
             correct = correct + 1;
           } else {
             incorrect = incorrect + 1;
           }
-        } else if (left_or_right == "left") {
+        } else if (fake_or_real == "fake") {
           if (!wordIsReal[wordIndex]) {
             correct = correct + 1;
           } else {
             incorrect = incorrect + 1;
           }
         }
-        // Serial.println(left_or_right);
+        // Serial.println(fake_or_real);
         // Serial.println(correct);
         // Serial.println(incorrect);
 
-        left_or_right = ""; // Reset the left_or_right string
+        fake_or_real = ""; // Reset the fake_or_real string
         wordIndex = (wordIndex + 1) % numWords;
         swr_waiting = true;
       }
     }
   }
 
-  
+
+  /*********************************
+
+  BLUETOOTH LOGIC
+
+  ********************************/
+  if (current_screen == 1 && item_selected == 4) { // Bluetooth screen
+    is_bluetooth_connected = BTSerial.available(); // Update connection status
+  }
+
+  /*********************************
+
+  CALIBRATING LOGIC
+
+  ********************************/
+  else if (current_screen == 1 && item_selected == 5) { // Bluetooth screen
+    baselinePitch = calibratePitch();
+    current_screen = 0;
+  }
 
 }
-
