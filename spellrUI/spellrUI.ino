@@ -15987,7 +15987,7 @@ void loop() {
 
     ********************/
     else if (current_screen == 3) {   // DISPLAY WORDS SCREEN
-      if (spelling_mode == 1) {
+      if (spelling_mode == 0) {
         // ANIMATED LETTERS HERE
         SSWORD = translated_word.c_str();
 
@@ -16006,7 +16006,7 @@ void loop() {
         }
 
         // if currentLetter is LAST, then exit!
-      } else if (spelling_mode == 0) {
+      } else if (spelling_mode == 1) {
         // REGULAR WORD SPELLING MODE: JUST DISPLAY THE TEXT ON THE SCREEN
         u8g2.setFont(u8g_font_7x14B);
         u8g2.setFontMode(1); // Enable transparent mode
@@ -16016,9 +16016,9 @@ void loop() {
         int x = (128 - textWidth) / 2; // Calculate x-coordinate to center the text
         int y = 35; // Adjust this value to vertically position the text
         u8g2.drawStr(x, y, translated_word.c_str());
-        delay(100);
-        spelling_mode = 1;
       }
+
+      //MODE 3: cycle through each letter, and then for the letter that's being spelled, you make it BIGGER and show how it's air-written
     }
     
     /********************
