@@ -88,6 +88,14 @@ extern const unsigned char* bitmap_screenshots[3];
 extern const unsigned char bitmap_scrollbar_background[];
 extern const unsigned char bitmap_item_sel_outline[];
 
+extern const int empty_epd_bitmap_allArray_LEN;
+extern const unsigned char* empty_epd_bitmap_allArray[4];
+extern const unsigned char empty_epd_bitmap_sprite_1[];
+extern const unsigned char empty_epd_bitmap_sprite_2[];
+extern const unsigned char empty_epd_bitmap_sprite_3[];
+extern const unsigned char empty_epd_bitmap_sprite_4[];
+
+
 extern const int A_epd_bitmap_allArray_LEN;
 extern const unsigned char* A_epd_bitmap_allArray[39];
 extern const unsigned char A_epd_bitmap_sprite_A00[];

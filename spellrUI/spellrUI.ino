@@ -91,7 +91,7 @@ bool inTranscribeMode = false;
 String inputString = "";      // a String to hold incoming data
 bool stringComplete = false;  // whether the string is complete
 
-String translated_word = "ABCDEFG";
+String translated_word = "THIS IS A SAMPLE WORD";
 
 
 /***************
@@ -192,7 +192,7 @@ int wifi_counter = 0;
 // int bitmapX = 70;  // Initial x position for the bitmap (right side)
 // bool isMoving = false;  // Flag to check if we are in moving mode
 
-#define MAX_WORD_LENGTH 10
+#define MAX_WORD_LENGTH 200
 // int currentLetterIndex = 0;  // Index of the current letter to animate
 // int frameCounter = 0;  // Frame counter for the animation
 // const unsigned char* lastFrameBitmaps[MAX_WORD_LENGTH];  // Array to store last frames
@@ -255,6 +255,16 @@ void loop() {
   // menu.handleButtonPress(BUTTON_UP_PIN);
   // menu.handleButtonPress(BUTTON_DOWN_PIN);
   // menu.handleButtonPress(BUTTON_SELECT_PIN);
+
+
+
+  // START IN SLEEP MODE BEFORE GOING TO 
+  // START IN SLEEP MODE ALWAYS
+  if (current_screen == 99) { // sleep mode
+    if ((digitalRead(BUTTON_SELECT_PIN) == LOW) && (button_select_clicked == 0)) { // select button clicked, jump between screens
+        current_screen = 0;
+    }
+  }
 
   if (current_screen == 0) { // MENU SCREEN
     sensors_event_t event; 
@@ -481,11 +491,40 @@ void loop() {
 
     u8g2.clearBuffer();
 
+    // // Display the word with the current letter in bold
+    // for (int i = 0; i < SSWORD.length(); i++) {
+    //     u8g2.setFont(i == currentLetterIndex && !isMoving ? u8g2_font_ncenB08_tr : u8g2_font_ncenR08_tr);
+    //     u8g2.drawGlyph(10 + i * 12, 8, SSWORD[i]); // Display letter words
+    // }
+
+
+    /// MAKE THIS PART CLEANER!!!
+    // CENTER AND BOLD DRAWN WORD
+    // GLYPH WIDTH IS ALWAYS 8x8
+    // Calculate the total width of the glyphs before the current glyph
+    int totalWidthBeforeCurrent = 0;
+    for (int i = 0; i < currentLetterIndex; i++) {
+        totalWidthBeforeCurrent += 9;  // 1 pixel space between characters
+    }
+
+    // Calculate the width of the current glyph
+    int currentGlyphWidth = 8;
+
+    // Calculate the starting x-position to center the current glyph
+    int screenCenter = 64; // Assuming a 128 pixel wide screen
+    int scrollOffset = screenCenter - (totalWidthBeforeCurrent + currentGlyphWidth / 2);
+
     // Display the word with the current letter in bold
+    int xPosition = scrollOffset;
     for (int i = 0; i < SSWORD.length(); i++) {
         u8g2.setFont(i == currentLetterIndex && !isMoving ? u8g2_font_ncenB08_tr : u8g2_font_ncenR08_tr);
-        u8g2.drawGlyph(10 + i * 12, 8, SSWORD[i]); // Display letter words
+        u8g2.drawGlyph(xPosition, 8, SSWORD[i]);
+        xPosition += 9;  // Move x position for the next glyph
     }
+
+//////////////////
+
+
 
     // Draw all frames of previous letters
     for (int i = 0; i <= currentLetterIndex; i++) {
@@ -800,7 +839,7 @@ const unsigned char** getBitmapArray(char letter) {
         case 'X': return X_epd_bitmap_allArray;
         case 'Y': return Y_epd_bitmap_allArray;
         case 'Z': return Z_epd_bitmap_allArray;
-        default: return A_epd_bitmap_allArray;
+        default: return empty_epd_bitmap_allArray;
     }
 }
 
@@ -847,6 +886,6 @@ int getBitmapArrayLength(char letter) {
         case 'Y': return Y_epd_bitmap_allArray_LEN;
         case 'Z': return Z_epd_bitmap_allArray_LEN;
 
-        default: return 1;  // Length of default bitmap
+        default: return empty_epd_bitmap_allArray_LEN;  // EMPTY IS SPACE CHARACTER
     }
 }
