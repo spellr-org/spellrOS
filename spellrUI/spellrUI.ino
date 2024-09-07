@@ -1,33 +1,34 @@
-// IN OMAR WE TRUST
+// Relevant Definitions
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <U8g2lib.h>
 #include <SoftwareSerial.h>
-
 #include <Adafruit_MSA301.h>
 #include <Adafruit_Sensor.h>
 #include <float.h> 
 #include "Bitmaps.h"
-//#include "Menu.h"
-//#include "AccelerometerHandler.h"
 
-// DEFINING THE PINS
-#define BUTTON_UP_PIN 12 // pin for UP button 
+// Define hardware pins we plan on reading.
+#define BUTTON_UP_PIN 12    // pin for UP button 
 #define BUTTON_SELECT_PIN 5 // pin for SELECT button
-#define BUTTON_DOWN_PIN 4 // pin for DOWN button
+#define BUTTON_DOWN_PIN 4   // pin for DOWN button
 
-// Display configuration
+// Display Setup
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET -1
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+#define MAX_WORD_LENGTH 200   // maximum chars in a word that can be animated
 
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 Adafruit_MSA311 msa;
 
-// U8G2 Library shit: need to adjust the stuff in the parentheses after u8g2() in order to use multiple serial ports or something like that
-// U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_DEV_0 | U8G_I2C_OPT_NO_ACK | U8G_I2C_OPT_FAST); // Fast I2C / TWI
+// Bluetooth Setup
+SoftwareSerial BTSerial(7, 8);
+
+// TODO: Note on U8G2 Library: we need to adjust the parentheses after u8g2() in order to use multiple serial ports
 U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0);
+// U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_DEV_0 | U8G_I2C_OPT_NO_ACK | U8G_I2C_OPT_FAST); // Fast I2C / TWI
 // U8GLIB_SSD1306_128X64 u8g(13, 11, 8, 9, 10); // SPI connection
 // for SPI connection, use this wiring:
 // GND > GND
@@ -38,19 +39,16 @@ U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2(U8G2_R0);
 // DC > 9
 // CS > 8
 
-SoftwareSerial BTSerial(7, 8);
 
 
+/***************
 
+Menu State Variables - variables needed for main menu
 
-// #include "Menu.h"
-
-
-
-const int NUM_ITEMS = 8; // number of items in the list and also the number of screenshots and screenshots with QR codes (other screens)
-const int MAX_ITEM_LENGTH = 20; // maximum characters for the item name
-
-char menu_items [NUM_ITEMS] [MAX_ITEM_LENGTH] = {  // array with item names
+***************/
+const int NUM_ITEMS = 8;          // number of items in the list and also the number of screenshots and screenshots with QR codes (other screens)
+const int MAX_ITEM_LENGTH = 20;   // maximum characters for the item name
+char menu_items [NUM_ITEMS] [MAX_ITEM_LENGTH] = {   // array with item names
   { "TRANSCRIBE" }, 
   { "Battery" }, 
   { "Dashboard" },
@@ -58,45 +56,34 @@ char menu_items [NUM_ITEMS] [MAX_ITEM_LENGTH] = {  // array with item names
   { "Bluetooth" }, 
   { "Calibrate" }
  };
+int button_up_clicked = 0;        // only perform action when button is clicked, and wait until another press
+int button_select_clicked = 0;    // same as above
+int button_down_clicked = 0;      // same as above
+int item_selected = 0;            // which item in the menu is selected
+int item_sel_previous;            // previous item - used in the menu screen to draw the item before the selected one
+int item_sel_next;                // next item - used in the menu screen to draw next item after the selected one
 
-// String menuItems[] = {"TRANSCRIBE", "Battery", "Dashboard", "WordQuest", "Bluetooth", "Calibrate"};
-// Menu menu(u8g2, menuItems, sizeof(menuItems) / sizeof(menuItems[0]));
+int current_screen = 0;           // Current Screen we should switch to: 0 = menu, 1 = screenshot, 2 = qr
 
-
-
-int button_up_clicked = 0; // only perform action when button is clicked, and wait until another press
-int button_select_clicked = 0; // same as above
-int button_down_clicked = 0; // same as above
-
-int item_selected = 0; // which item in the menu is selected
-
-int item_sel_previous; // previous item - used in the menu screen to draw the item before the selected one
-int item_sel_next; // next item - used in the menu screen to draw next item after the selected one
-
-int current_screen = 0;   // 0 = menu, 1 = screenshot, 2 = qr
-
-// SPELLING: 0 just shows the word, 1 shows the letters one by one, 2 shows each individual letter being written out
-int spelling_mode = 0;
-
+int spelling_mode = 0;            // Animation Mode for Transcription: 0 just shows the word, 1 shows the letters one by one, 2 shows each individual letter being written out
 
 
 /***************
 
-STATE TRANSCRIBE - variables needed for transcription functionality
+Transcription State Variables - variables needed for transcription functionality
 
 ***************/
 const int micPin = A0;
 bool inTranscribeMode = false;
-
 String inputString = "";      // a String to hold incoming data
 bool stringComplete = false;  // whether the string is complete
 
-String translated_word = "THIS IS A SAMPLE WORD";
+String translated_word = "THIS IS THE DEFAULT WORD SPELLED OUT";
 
 
 /***************
 
-STATE SWR - Variables needed for SWR game (wordquest)
+SWR state variables - Variables needed for SWR game (wordquest)
 
 ***************/
 const char* words[] = {"apple", "banana", "orange", "qwerty", "zxcvbn"};
@@ -111,14 +98,11 @@ float baselinePitch = 30;
 
 /********************
 
-HELPER FN FOR FUNDING TILT DIRECTION (pitch and roll based on accelerometer)
+Helper Function for Detecting Pitch Direction (pitch and roll based on accelerometer)
 
 ********************/
-
 String getTiltDirection(float pitch, float roll, float baselinePitch) {
-  String direction = "";
-
-  
+  String direction = "";  
   // Define the baseline as 30 degrees tilted up
   // float baselinePitch = -30.0; // Adjusting for 30 degrees up as the new baseline
   
@@ -147,13 +131,14 @@ String getTiltDirection(float pitch, float roll, float baselinePitch) {
   return direction;
 }
 
+/********************
 
+Helper Function for Calibrating the Pitch as Needed
+
+********************/
 float calibratePitch () {
-  // Calibration logic to establish baseline pitch
-
-  // Variables to store the sum of pitch readings and the final baseline pitch
   float pitchSum = 0.0;
-  const int readings = 30; // Number of readings to take for averaging
+  const int readings = 30;       // Number of readings to take for averaging
   
   // Take multiple readings of the pitch over a short period
   for (int i = 0; i < readings; i++) {
@@ -161,63 +146,51 @@ float calibratePitch () {
       msa.getEvent(&event);
 
       float pitch = atan(event.acceleration.x / sqrt(event.acceleration.y * event.acceleration.y + event.acceleration.z * event.acceleration.z)) * (180.0 / M_PI);
-      pitchSum += pitch; // Assuming readPitch() is your function to read the current pitch
-      delay(100); // Short delay between readings to spread them out over time
+      pitchSum += pitch;
+      delay(100);
 }
-
   float new_pitch_base = pitchSum / readings;
   return new_pitch_base;
 }
 
 /***************
 
-STATE BLUETOOTH - Variables needed for bluetooth connection and maintenance
+Bluetooth State Variables - Variables needed for bluetooth connection and maintenance
 
 ***************/
 bool is_bluetooth_connected = false;
 
 
 
+/***************
+
+Animation State Variables
+
+***************/
+String SSWORD = "DEFAULT WORD";   // "Soundly Spelled Word"
+int wifi_counter = 0;             // Frame Counter for Wifi Animation
 
 
+int currentLetterIndex = 0;             // Index of the current letter to animate
+int frameCounter = 0;                   // Frame counter for the animation
+const unsigned char** lastFrameBitmaps = new const unsigned char*[MAX_WORD_LENGTH];  // Array to store last frames (allows letters to persist after writing)
+int positions[MAX_WORD_LENGTH];         // Positions of the last frames
+bool isMoving = false;                  // Flag to check if we are in moving mode
+int bitmapX = 70;                       // Initial x position for the bitmap (right side)
 
-/////////////////EXPERIMENTAL LETTER SHIT
-// LETTER ANIMATION BITMAPS
-String SSWORD = "ABCDEFG";
-int wifi_counter = 0;
-/// V1
-// int currentLetterIndex = 0;  // Index of the current letter to animate
-// int frameCounter = 0;  // Frame counter for the animation
-// const unsigned char *currentFrameBitmap = nullptr;  // Current frame to animate
-// int bitmapX = 70;  // Initial x position for the bitmap (right side)
-// bool isMoving = false;  // Flag to check if we are in moving mode
+/***************
 
-#define MAX_WORD_LENGTH 200
-// int currentLetterIndex = 0;  // Index of the current letter to animate
-// int frameCounter = 0;  // Frame counter for the animation
-// const unsigned char* lastFrameBitmaps[MAX_WORD_LENGTH];  // Array to store last frames
-// const unsigned char* currentFrameBitmap = nullptr;  // To store the current frame being animated
-// int positions[MAX_WORD_LENGTH];  // Positions of the last frames
-// bool isMoving = false;  // Flag to check if we are in moving mode
-// int bitmapX = 70;  // Initial x position for the bitmap (right side)
-int currentLetterIndex = 0;  // Index of the current letter to animate
-int frameCounter = 0;  // Frame counter for the animation
-const unsigned char** lastFrameBitmaps = new const unsigned char*[MAX_WORD_LENGTH];  // Array to store last frames
-int positions[MAX_WORD_LENGTH];  // Positions of the last frames
-bool isMoving = false;  // Flag to check if we are in moving mode
-int bitmapX = 70;  // Initial x position for the bitmap (right side)
+Arduino quirk: this setup() function runs once after you turn on the Teensy.
 
-
+***************/
 void setup() {
   u8g2.begin();
-  u8g2.setColorIndex(1);  // set the color to white
+  u8g2.setColorIndex(1);  // OLED only displays white
 
-  // define pins for buttons
-  // INPUT_PULLUP means the button is HIGH when not pressed, and LOW when pressed
-  // since it´s connected between some pin and GND
-  pinMode(BUTTON_UP_PIN, INPUT_PULLUP); // up button
-  pinMode(BUTTON_SELECT_PIN, INPUT_PULLUP); // select button
-  pinMode(BUTTON_DOWN_PIN, INPUT_PULLUP); // down button
+  // (INPUT_PULLUP means the button is HIGH when not pressed, and LOW when pressed)
+  pinMode(BUTTON_UP_PIN, INPUT_PULLUP);        // up button
+  pinMode(BUTTON_SELECT_PIN, INPUT_PULLUP);    // select button
+  pinMode(BUTTON_DOWN_PIN, INPUT_PULLUP);      // down button
 
   BTSerial.begin(9600);
   Serial.begin(9600);
@@ -230,38 +203,23 @@ void setup() {
  }
   Serial.println("MSA301 Found!");
 
-  // Menu menu(u8g2, menu_items, NUM_ITEMS);
 
-
-////////////EXPERIMENTAL LETTER SHIT
-// V1
+    // Experimental: Letter Animation Setup
     // bitmapX = 70;  // Start from the right side, 3/4th of the width - half bitmap width
-    u8g2.setFont(u8g2_font_ncenB08_tr); // Set a bold font for the animation
+    u8g2.setFont(u8g2_font_ncenB08_tr); // set a bold font for the animation
     for (int i = 0; i < MAX_WORD_LENGTH; i++) {
-        positions[i] = -1;  // Initialize positions off the visible area
+        positions[i] = -1;              // initialize positions off the visible area
     }
-
-
-
-  
 }
 
 
 void loop() {
 
-  u8g2.firstPage(); // required for page drawing mode for u8g library
+  u8g2.firstPage();
 
-  // menu.update();
-  // menu.handleButtonPress(BUTTON_UP_PIN);
-  // menu.handleButtonPress(BUTTON_DOWN_PIN);
-  // menu.handleButtonPress(BUTTON_SELECT_PIN);
-
-
-
-  // START IN SLEEP MODE BEFORE GOING TO 
-  // START IN SLEEP MODE ALWAYS
+  // Begin in Sleep Mode
   if (current_screen == 99) { // sleep mode
-    if ((digitalRead(BUTTON_SELECT_PIN) == LOW) && (button_select_clicked == 0)) { // select button clicked, jump between screens
+    if ((digitalRead(BUTTON_SELECT_PIN) == LOW) && (button_select_clicked == 0)) { // if select button clicked, jump between screens
         current_screen = 0;
     }
   }
@@ -274,21 +232,20 @@ void loop() {
 
     String tiltDirection = getTiltDirection(pitch, roll, baselinePitch);
 
-
-
-      // up and down buttons only work for the menu screen
-      if (tiltDirection.startsWith("Down")) { // up button clicked - jump to previous menu item
-        item_selected = item_selected - 1; // select previous item
-        button_up_clicked = 1; // set button to clicked to only perform the action once
-        if (item_selected < 0) { // if first item was selected, jump to last item
+      // UP BUTTON CLICKED
+      if (tiltDirection.startsWith("Down")) {  // up button clicked - jump to previous menu item
+        item_selected = item_selected - 1;     // select previous item
+        button_up_clicked = 1;                 // set button to clicked to only perform the action once (otherwise the time it takes for your finger to lift off the button will be too long!)
+        if (item_selected < 0) {               // if first item was selected, jump to last item
           item_selected = NUM_ITEMS-1;
         }
         delay(500);
       }
-      else if (tiltDirection.startsWith("Up")) { // down button clicked - jump to next menu item
-        item_selected = item_selected + 1; // select next item
-        button_down_clicked = 1; // set button to clicked to only perform the action once
-        if (item_selected >= NUM_ITEMS) { // last item was selected, jump to first menu item
+      // DOWN BUTTON CLICKED
+      else if (tiltDirection.startsWith("Up")) {  // down button clicked - jump to next menu item
+        item_selected = item_selected + 1;        // select next item
+        button_down_clicked = 1;                  // set button to clicked to only perform the action once
+        if (item_selected >= NUM_ITEMS) {         // last item was selected, jump to first menu item
           item_selected = 0;
         }
         delay(500);
@@ -303,32 +260,44 @@ void loop() {
 
   }
 
-  if ((digitalRead(BUTTON_SELECT_PIN) == LOW) && (button_select_clicked == 0)) { // select button clicked, jump between screens
-     button_select_clicked = 1; // set button to clicked to only perform the action once
-     if (current_screen == 0) {current_screen = 1;} // menu items screen --> screenshots screen
-     else {current_screen = 0;} // back to screen --> menu items screen
+  // SELECTION BUTTON CLICKED
+  if ((digitalRead(BUTTON_SELECT_PIN) == LOW) && (button_select_clicked == 0)) { // select button clicked, which means you have to jump between screens
+     button_select_clicked = 1;                                                  // set button to clicked to only perform the action once
+     if (current_screen == 0) {current_screen = 1;}                              // menu items screen --> screenshots screen
+     else {current_screen = 0;}                                                  // back to screen --> menu items screen
   }
   if ((digitalRead(BUTTON_SELECT_PIN) == HIGH) && (button_select_clicked == 1)) { // unclick 
     button_select_clicked = 0;
   }
 
-  // set correct values for the previous and next items
+  // set correct values for the previous and next items as they are displayed in the menu.
   item_sel_previous = item_selected - 1;
   if (item_sel_previous < 0) {item_sel_previous = NUM_ITEMS - 1;} // previous item would be below first = make it the last
   item_sel_next = item_selected + 1;  
-  if (item_sel_next >= NUM_ITEMS) {item_sel_next = 0;} // next item would be after last = make it the first
+  if (item_sel_next >= NUM_ITEMS) {item_sel_next = 0;}            // next item would be after last = make it the first
 
 
   do {
-    ///////////////////RENDER/////////////////////////// RENDERING SCREEN STUFF BELOW HERE
-
 
     /********************
-    current_screen 0
-    RENDER MENU stuff here
+
+    RENDERING THE BITMAPS - all screen rendering is handled here.
+
+    Menu Screen -> current_screen = 0
+    SWR Game Screen -> current_screen 1, item_selected 3
+    Wifi Loading Animation Screen -> current_screen 1, item_selected 4
+    Accelerometer Calibrating Screen -> current_screen 1 item_selected 5
+
+    Transcription/listening screen -> current_screen 1 item_selected 0
+    Transcription/spelling animation -> current_screen 3
+
+    Predefined bitmap screen according to whatever's in Bitmaps.cpp -> current_screen 1
+
+    SWR Game mode -> current_screen 4
 
     ********************/
-    if (current_screen == 0) { // MENU SCREEN
+    // Menu Screen
+    if (current_screen == 0) { 
 
       // selected item background
       u8g2.drawBitmap(0, 22, 128/8, 21, bitmap_item_sel_outline);
@@ -356,14 +325,14 @@ void loop() {
 
 
       if (is_bluetooth_connected) {
-        // draw bluetooth connected
+        // draw bluetooth connected icon in top right
         u8g2.drawBitmap(128-16-4, 1, 16/8, 16, bluetooth_logo);    
       }
     }
 
     /********************
     current_screen 1, item_selected 3
-    RENDER SWR in-game graphics, the plus sign + thing and the 
+    RENDER SWR in-game graphics
 
     ********************/
     else if (current_screen == 1 && item_selected == 3) {
@@ -460,29 +429,9 @@ void loop() {
     RENDER output of transcribe word, different spelling modes
 
     ********************/
+////////////////////////////////////////////////////////////////////////  BEGIN EXPERIMENTAL ANIMATIONS SECTION    
     else if (current_screen == 3) {   // DISPLAY WORDS SCREEN
       if (spelling_mode == 0) {
-        // ANIMATED LETTERS HERE
-        // SSWORD = translated_word.c_str();
-
-        // const unsigned char** frames = getBitmapArray(SSWORD[currentLetter]);
-        // int frameCount = getBitmapArrayLength(SSWORD[currentLetter]);
-
-        // u8g2.clearBuffer(); // Clear the display buffer
-        // u8g2.drawXBMP((128 - 1 - 64) / 2, 3, 64, 64, frames[frameCounter]); // Draw the current frame
-        // u8g2.sendBuffer();
-        // delay(50);
-
-        // frameCounter++;
-        // if (frameCounter >= frameCount) {
-        //     frameCounter = 0;
-        //     currentLetter = (currentLetter + 1) % SSWORD.length();
-        // }
-        // Loop through each letter to manage its animation or display
-        // Draw all letters up to the current one
-
-
-    /////////////////////EXPERIMENTAL ANIMATIONS SHIT
 
 
     SSWORD = translated_word.c_str();
@@ -490,18 +439,6 @@ void loop() {
 
 
     u8g2.clearBuffer();
-
-    // // Display the word with the current letter in bold
-    // for (int i = 0; i < SSWORD.length(); i++) {
-    //     u8g2.setFont(i == currentLetterIndex && !isMoving ? u8g2_font_ncenB08_tr : u8g2_font_ncenR08_tr);
-    //     u8g2.drawGlyph(10 + i * 12, 8, SSWORD[i]); // Display letter words
-    // }
-
-
-    /// MAKE THIS PART CLEANER!!!
-    // CENTER AND BOLD DRAWN WORD
-    // GLYPH WIDTH IS ALWAYS 8x8
-    // Calculate the total width of the glyphs before the current glyph
     int totalWidthBeforeCurrent = 0;
     for (int i = 0; i < currentLetterIndex; i++) {
         totalWidthBeforeCurrent += 9;  // 1 pixel space between characters
@@ -521,10 +458,6 @@ void loop() {
         u8g2.drawGlyph(xPosition, 8, SSWORD[i]);
         xPosition += 9;  // Move x position for the next glyph
     }
-
-//////////////////
-
-
 
     // Draw all frames of previous letters
     for (int i = 0; i <= currentLetterIndex; i++) {
@@ -582,15 +515,7 @@ void loop() {
     u8g2.sendBuffer();
     delay(10);  // Control the speed of the animation
 
-
-    
-
-    /////////////// EXPERIMENTAL ANIMATIONS SHIT
-    
-
-    
-
-        
+////////////////////////////////////////////////////////////////////////  END EXPERIMENTAL ANIMATIONS SECTION    
 
       } else if (spelling_mode == 1) {
         // REGULAR WORD SPELLING MODE: JUST DISPLAY THE TEXT ON THE SCREEN
@@ -621,17 +546,9 @@ void loop() {
   } while ( u8g2.nextPage() ); // required for page drawing mode with u8g library
 
 
-
-
-
-
-    ///////////////////LOGIC/////////////////////////// Internal logic and state stuff for all screens here
-
-
-
 /*********************************
 
-Transcribe LOGIC: listening to the microphone and handling serial shit
+Transcribe LOGIC: listening to the microphone and handling serial data
 
 ********************************/
   if (current_screen == 1 && item_selected == 0) {
